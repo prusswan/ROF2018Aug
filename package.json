@@ -6,6 +6,7 @@
     "@angular/platform-browser": "^6.1.6",
     "@angular/platform-browser-dynamic": "^6.1.6",
     "@rails/webpacker": "3.5",
+    "angular": "1.7",
     "core-js": "^2.5.7",
     "geojson-path-finder": "^1.5.1",
     "rxjs": "^6.3.1",
