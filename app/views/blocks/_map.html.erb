@@ -7,6 +7,7 @@
   <!-- script src="http://t1.onemap.sg/om_js/arcgis_js_api/library/2.8/arcgis/js/default.js" type="text/javascript"></script -->
   <!-- %= javascript_include_tag 'onemap' % -->
   <!-- link rel="stylesheet" type="text/css" href="http://t1.onemap.sg/om_js/arcgis_js_api/library/2.8/arcgis/js/dojo/dijit/themes/tundra/tundra.css"/ -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/lodash.js/4.17.10/lodash.js"></script>
 
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/normalize/4.2.0/normalize.min.css">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.3.1/dist/leaflet.css">
@@ -63,18 +64,103 @@
 
     loadLeaflet = function() {
       var blocksPromise = $.getJSON("https://cdn.rawgit.com/prusswan/ROF2018Aug/7d16d646/public/blocks_all.geojson");
-      var stopsPromise = $.getJSON("https://cdn.rawgit.com/prusswan/SBF2018May/44236bfe/public/busstops_all.geojson");
+      //var stopsPromise = $.getJSON("https://cdn.rawgit.com/prusswan/SBF2018May/44236bfe/public/busstops_all.geojson");
       // var stopsPromise = $.getJSON('/busstops_all.geojson');
 
-      $.when(blocksPromise, stopsPromise).then(function(data, data2) {
+      $.when(blocksPromise).then(function(data, data2) {
         window.blocksData = data;
-        window.stopsData = data2;
+        //window.stopsData = data2;
         loadScript(urls[0], recursiveCallback);
       }).fail(function(jqxhr, textStatus, errorThrown) {
         console.log(errorThrown);
       });
 
 
+    };
+
+    var busMarkers;
+
+    buildBusLayer = function(json) {
+      var busIcon = L.icon({
+        iconUrl: 'https://www.mytransport.sg/img/bus.gif',
+        iconSize: [20, 29]
+      });
+
+      var data = _.map(json, f => {return {
+        type: 'Point',
+        coordinates: [f.lon, f.lat],
+        id: f.stop,
+        properties: {
+          Description: f.name,
+          BusServices: _.map(f.services, s => s.bus_no)
+        }
+      }});
+
+      var busLayer = L.geoJson(data, {
+        pointToLayer: function(feature, latlng) {
+          return new L.marker(latlng, {
+            icon: busIcon
+          });
+        },
+        onEachFeature: function(feature, layer) {
+          var popup = feature.id + ': ' + feature.properties.Description + '<br>' +
+            feature.properties.BusServices.toString();
+
+          layer.bindPopup(popup);
+        }
+      });
+
+      return busLayer;
+    };
+
+    updateBusStops = function(lat, lng) {
+      $.ajax({
+        url: 'https://www.onemap.sg/nearby-api/getNearestBusStops',
+        data: {
+          lat: lat,
+          lon: lng
+        },
+        success: function(busResult) {
+          console.log("nearest stops", busResult);
+          updateBusLayer(busResult);
+        }
+      });
+    }
+    updateBusLayer = function(data) {
+      let stops = data.map((val,i,data) => {
+        return val["id"];
+      });
+
+      window.stops = stops;
+      window.stopsInfo = _.groupBy(data, s => JSON.stringify(s.id));
+
+      $.ajax({
+        url: 'https://developers.onemap.sg/publicapi/busexp/getbusStopsInfo?busStopNo=' + stops.join(","),
+        data: {
+          token: "<%= ApplicationController.helpers.onemap_publicapi_token %>"
+        },
+        success: function(serviceResult) {
+          console.log("stops and services", serviceResult);
+          window.servicesInfo = serviceResult['BusStopInfo'];
+          window.services = _.chain(window.servicesInfo)
+            .sortBy(s => s.bus_no)
+            .groupBy(s => s.bus_stop)
+            .map((v,k) => {return Object.assign({},JSON.parse(k), {
+              stop: k,
+              lon: window.stopsInfo[k][0].lon,
+              lat: window.stopsInfo[k][0].lat,
+              name: window.stopsInfo[k][0].name,
+              road: window.stopsInfo[k][0].road,
+              services: _.map(v, i => _.pick(i,['bus_no','bus_name']))
+            })}).value();
+
+          // update busLayer
+          busMarkers.clearLayers();
+          var busLayer = buildBusLayer(window.services);
+          window.busLayer = busLayer;
+          busMarkers.addLayer(busLayer);
+        }
+      });
     };
 
     initMap = function() {
@@ -129,25 +215,9 @@
       markers.addLayer(geoJsonLayer);
       newMap.addLayer(markers);
 
-      var busIcon = L.icon({
-        iconUrl: 'https://www.mytransport.sg/img/bus.gif',
-        iconSize: [20, 29]
-      });
+      var busLayer = buildBusLayer(window.stopsData);
 
-      var busLayer = L.geoJson(window.stopsData, {
-        pointToLayer: function(feature, latlng) {
-          return new L.marker(latlng, {
-            icon: busIcon
-          });
-        },
-        onEachFeature: function(feature, layer) {
-          var popup = feature.id + ': ' + feature.properties.Description + '<br>' +
-            feature.properties.BusServices.toString();
-
-          layer.bindPopup(popup);
-        }
-      });
-      var busMarkers = L.markerClusterGroup({
+      busMarkers = L.markerClusterGroup({
         disableClusteringAtZoom: 16
       });
       busMarkers.addLayer(busLayer);
@@ -160,6 +230,11 @@
         else {
           newMap.addLayer(busMarkers);
         }
+      })
+
+      newMap.on('moveend', function(e) {
+        var center = e.target.getCenter();
+        updateBusStops(center.lat, center.lng);
       })
 
       window.map = newMap;
@@ -208,6 +283,8 @@
           }
           marker = new L.Marker([lat, lng]).addTo(map);
           map.setView([lat, lng], 16);
+
+          updateBusStops(lat, lng);
         }
       });
     };

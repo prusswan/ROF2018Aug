@@ -65,4 +65,13 @@ module ApplicationHelper
     result
   end
 
+  def onemap_publicapi_token
+    Rails.cache.fetch('onemap_public_token') do
+      response = JSON.parse open("https://developers.onemap.sg/publicapi/publicsessionid").read
+      token = response["access_token"]
+      expiry_time = response["expiry_timestamp"].to_i - Time.now.to_i
+      Rails.cache.write('onemap_public_token', token, expires_in: expiry_time)
+      token
+    end
+  end
 end
